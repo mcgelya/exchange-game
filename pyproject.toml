@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "exchange-game"
+version = "0.1.0"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.110.0"
+uvicorn = { extras = ["standard"], version = "^0.30.0" }
+sqlalchemy = { extras = ["asyncio"], version = "^2.0.30" }
+pydantic = "^2.6.0"
+pydantic-settings = "^2.2.0"
+aiosqlite = "^0.19.0"
+greenlet = "^3.0.0"
+
+[tool.poetry.group.dev.dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
