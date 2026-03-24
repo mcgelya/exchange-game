@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,11 +24,25 @@ class GameCreateRequest(BaseModel):
     cost_growth_per_minute: int | None = Field(
         default=None, ge=0, description="Cost growth per minute"
     )
-    submit_penalty: int | None = Field(
-        default=None, ge=0, description="Penalty per submit attempt"
+    exchange_step_percent: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Cost growth between neighboring exchanges",
     )
-    solve_bonus: int | None = Field(
-        default=None, ge=0, description="Bonus (cost reduction) on solve"
+    solve_discount_percent: int | None = Field(
+        default=None, ge=0, le=100, description="Cost discount after every solve"
+    )
+    wrong_attempt_limit: int | None = Field(
+        default=None,
+        ge=0,
+        description="Max wrong attempts that can increase task cost",
+    )
+    wrong_attempt_growth_percent: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Cost growth for every counted wrong attempt",
     )
 
 
@@ -64,11 +79,15 @@ class RegisterResponse(BaseModel):
 
 class TaskStatus(BaseModel):
     task_id: int
+    name: str
     exchange: int
+    base_cost: int
     cost: int
-    solved: bool
     solved_by_me: bool
+    my_solved_cost: int | None = None
     attempts: int
+    my_attempts: int
+    wrong_attempts: int
     solves: int
 
     model_config = ConfigDict(from_attributes=True)
@@ -90,17 +109,74 @@ class SubmitResponse(BaseModel):
     task_id: int
     exchange: int
     cost: int
-    solved: bool
+    solved_by_me: bool
     attempts: int
+    wrong_attempts: int
+    solves: int
 
 
 class TaskAddRequest(BaseModel):
     pool: str = Field(..., min_length=1, description="Pool name/slug")
     name: str = Field(..., min_length=1, description="Task name")
     answer: str = Field(..., min_length=1, description="Correct answer")
+    base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
 
 
 class TaskAddResponse(BaseModel):
     id: int
     pool: str
     name: str
+    base_cost: int
+
+
+class TaskBulkItem(BaseModel):
+    name: str = Field(..., min_length=1, description="Task name")
+    answer: str = Field(..., min_length=1, description="Correct answer")
+    base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
+
+
+class TaskBulkAddRequest(BaseModel):
+    pool: str = Field(..., min_length=1, description="Pool name/slug")
+    tasks: list[TaskBulkItem] = Field(..., min_length=1)
+
+
+class TaskBulkAddResponse(BaseModel):
+    pool: str
+    created: int
+    updated: int
+    tasks: list[TaskAddResponse]
+
+
+class LeaderboardPlayer(BaseModel):
+    rank: int
+    player_id: int
+    score: int
+    solves: int
+    attempts: int
+    wrong_attempts: int
+    last_solve_at: datetime | None = None
+
+
+class LeaderboardSolve(BaseModel):
+    player_id: int
+    cost: int
+    solved_at: datetime
+
+
+class LeaderboardTask(BaseModel):
+    task_id: int
+    name: str
+    exchange: int
+    base_cost: int
+    current_cost: int
+    solves: int
+    attempts: int
+    wrong_attempts: int
+    solved_by: list[LeaderboardSolve]
+
+
+class LeaderboardResponse(BaseModel):
+    game_id: str
+    status: GameStatusEnum
+    players: list[LeaderboardPlayer]
+    tasks: list[LeaderboardTask]

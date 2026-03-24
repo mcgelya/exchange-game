@@ -12,7 +12,9 @@ class Base(DeclarativeBase):
 
 settings = get_settings()
 engine = create_async_engine(settings.database_url, echo=settings.echo_sql, future=True)
-AsyncSessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+AsyncSessionMaker = async_sessionmaker(
+    engine, expire_on_commit=False, class_=AsyncSession
+)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

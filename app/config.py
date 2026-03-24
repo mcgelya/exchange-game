@@ -10,10 +10,14 @@ class Settings(BaseSettings):
     api_key: str = "changeme"
     base_task_cost: int = 100
     cost_growth_per_minute: int = 5
-    submit_penalty: int = 10
-    solve_bonus: int = 20
+    exchange_step_percent: int = 10
+    solve_discount_percent: int = 10
+    wrong_attempt_limit: int = 5
+    wrong_attempt_growth_percent: int = 3
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
 
 @lru_cache

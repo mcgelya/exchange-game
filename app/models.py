@@ -40,8 +40,10 @@ class Game(Base):
     pool: Mapped[str] = mapped_column(String(100))
     base_cost: Mapped[int] = mapped_column(Integer, default=100)
     cost_growth_per_minute: Mapped[int] = mapped_column(Integer, default=5)
-    submit_penalty: Mapped[int] = mapped_column(Integer, default=10)
-    solve_bonus: Mapped[int] = mapped_column(Integer, default=20)
+    exchange_step_percent: Mapped[int] = mapped_column(Integer, default=10)
+    solve_discount_percent: Mapped[int] = mapped_column(Integer, default=10)
+    wrong_attempt_limit: Mapped[int] = mapped_column(Integer, default=5)
+    wrong_attempt_growth_percent: Mapped[int] = mapped_column(Integer, default=3)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -67,12 +69,18 @@ class Task(Base):
     pool: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(100))
     answer: Mapped[str] = mapped_column(String(255))
+    base_cost: Mapped[int] = mapped_column(Integer, default=100)
+
+    __table_args__ = (UniqueConstraint("pool", "name", name="uq_task_pool_name"),)
 
 
-class TaskState(Base):
-    __tablename__ = "task_states"
+class Submission(Base):
+    __tablename__ = "submissions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    player_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
     game_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("games.id", ondelete="CASCADE"), index=True
     )
@@ -80,22 +88,12 @@ class TaskState(Base):
         Integer, ForeignKey("tasks.id", ondelete="CASCADE"), index=True
     )
     exchange: Mapped[int] = mapped_column(Integer)
-    base_cost: Mapped[int] = mapped_column(Integer)
-    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
-    solve_count: Mapped[int] = mapped_column(Integer, default=0)
-    solved: Mapped[bool] = mapped_column(Boolean, default=False)
-    solved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    solved_cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "game_id", "task_id", "exchange", name="uq_game_task_exchange"
-        ),
+    answer: Mapped[str] = mapped_column(String(255))
+    accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    cost: Mapped[int] = mapped_column(Integer)
+    banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -109,15 +107,21 @@ class PlayerSolved(Base):
     game_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("games.id", ondelete="CASCADE"), index=True
     )
-    task_id: Mapped[int] = mapped_column(Integer, index=True)
+    task_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
     exchange: Mapped[int] = mapped_column(Integer)
-    cost_at_solve: Mapped[int] = mapped_column(Integer)
+    cost: Mapped[int] = mapped_column(Integer)
     solved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "player_id", "game_id", "task_id", "exchange", name="uq_player_game_task_exchange"
+            "player_id",
+            "game_id",
+            "task_id",
+            "exchange",
+            name="uq_player_game_task_exchange",
         ),
     )
