@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -59,6 +60,8 @@ class Player(Base):
     game_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("games.id", ondelete="CASCADE"), index=True
     )
+    team_name: Mapped[str] = mapped_column(String(100))
+    members: Mapped[str] = mapped_column(Text, default="[]")
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
 
@@ -68,6 +71,7 @@ class Task(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     pool: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(100))
+    statement: Mapped[str] = mapped_column(Text, default="")
     answer: Mapped[str] = mapped_column(String(255))
     base_cost: Mapped[int] = mapped_column(Integer, default=100)
 
@@ -109,6 +113,9 @@ class PlayerSolved(Base):
     )
     task_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
+    submission_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("submissions.id", ondelete="SET NULL"), nullable=True
     )
     exchange: Mapped[int] = mapped_column(Integer)
     cost: Mapped[int] = mapped_column(Integer)

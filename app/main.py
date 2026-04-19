@@ -2,12 +2,13 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 import secrets
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, schemas
@@ -79,6 +80,31 @@ def as_utc(value: datetime | None) -> datetime | None:
 
 def normalize_answer(value: str) -> str:
     return value.strip().lower()
+
+
+def encode_members(members: list[str]) -> str:
+    cleaned = [member.strip() for member in members if member.strip()]
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
+def decode_members(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(member) for member in parsed]
+
+
+def player_info(player: models.Player) -> schemas.PlayerInfo:
+    return schemas.PlayerInfo(
+        id=player.id,
+        team_name=player.team_name,
+        members=decode_members(player.members),
+    )
 
 
 def exchange_multiplier(exchange: int, exchange_step_percent: int) -> float:
@@ -170,6 +196,40 @@ async def get_game_tasks(game: models.Game, session: AsyncSession) -> list[model
     return list(result.scalars().all())
 
 
+async def registered_player_count(game_id: str, session: AsyncSession) -> int:
+    return (
+        await session.scalar(
+            select(func.count())
+            .select_from(models.Player)
+            .where(models.Player.game_id == game_id)
+        )
+        or 0
+    )
+
+
+async def game_info(game: models.Game, session: AsyncSession) -> schemas.GameInfo:
+    return schemas.GameInfo(
+        id=game.id,
+        status=game.status,
+        pool=game.pool,
+        exchanges=game.exchanges,
+        tasks=game.tasks,
+        players=game.players,
+        registered_players=await registered_player_count(game.id, session),
+        duration_minutes=game.duration_minutes,
+        base_cost=game.base_cost,
+        cost_growth_per_minute=game.cost_growth_per_minute,
+        exchange_step_percent=game.exchange_step_percent,
+        solve_discount_percent=game.solve_discount_percent,
+        wrong_attempt_limit=game.wrong_attempt_limit,
+        wrong_attempt_growth_percent=game.wrong_attempt_growth_percent,
+        created_at=game.created_at,
+        started_at=game.started_at,
+        stopped_at=game.stopped_at,
+        server_time=datetime.now(timezone.utc),
+    )
+
+
 async def get_solve_counts(game_id: str, session: AsyncSession) -> dict[TaskKey, int]:
     rows = await session.execute(
         select(
@@ -229,6 +289,31 @@ async def get_task_counters(game_id: str, session: AsyncSession) -> TaskCounters
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/v1/games", response_model=schemas.GameListResponse)
+async def list_games(
+    _auth=Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(models.Game).order_by(models.Game.created_at))
+    games = [await game_info(game, session) for game in result.scalars().all()]
+    return schemas.GameListResponse(games=games)
+
+
+@app.get("/v1/games/{game_id}", response_model=schemas.GameInfo)
+async def get_game(
+    game_id: str,
+    _auth=Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    game = await session.get(models.Game, game_id)
+    if not game:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Game not found"
+        )
+    game = await maybe_stop_expired(game, session)
+    return await game_info(game, session)
 
 
 @app.post(
@@ -327,18 +412,24 @@ async def add_task(
     )
     if task:
         task.answer = payload.answer
+        task.statement = payload.statement
         task.base_cost = pick(payload.base_cost, settings.base_task_cost)
     else:
         task = models.Task(
             pool=payload.pool,
             name=payload.name,
+            statement=payload.statement,
             answer=payload.answer,
             base_cost=pick(payload.base_cost, settings.base_task_cost),
         )
         session.add(task)
     await session.commit()
     return schemas.TaskAddResponse(
-        id=task.id, pool=task.pool, name=task.name, base_cost=task.base_cost
+        id=task.id,
+        pool=task.pool,
+        name=task.name,
+        statement=task.statement,
+        base_cost=task.base_cost,
     )
 
 
@@ -373,12 +464,14 @@ async def add_task_pool(
         task = existing.get(item.name)
         if task:
             task.answer = item.answer
+            task.statement = item.statement
             task.base_cost = pick(item.base_cost, settings.base_task_cost)
             updated += 1
         else:
             task = models.Task(
                 pool=payload.pool,
                 name=item.name,
+                statement=item.statement,
                 answer=item.answer,
                 base_cost=pick(item.base_cost, settings.base_task_cost),
             )
@@ -393,7 +486,11 @@ async def add_task_pool(
         updated=updated,
         tasks=[
             schemas.TaskAddResponse(
-                id=task.id, pool=task.pool, name=task.name, base_cost=task.base_cost
+                id=task.id,
+                pool=task.pool,
+                name=task.name,
+                statement=task.statement,
+                base_cost=task.base_cost,
             )
             for task in tasks
         ],
@@ -440,11 +537,7 @@ async def register_player(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Game not available"
         )
 
-    player_count = await session.scalar(
-        select(func.count())
-        .select_from(models.Player)
-        .where(models.Player.game_id == payload.game_id)
-    )
+    player_count = await registered_player_count(payload.game_id, session)
     if player_count >= game.players:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -452,9 +545,20 @@ async def register_player(
         )
 
     token = secrets.token_hex(16)
-    session.add(models.Player(game_id=payload.game_id, token=token))
+    player = models.Player(
+        game_id=payload.game_id,
+        team_name=payload.team_name or f"Team {player_count + 1}",
+        members=encode_members(payload.members),
+        token=token,
+    )
+    session.add(player)
     await session.commit()
-    return schemas.RegisterResponse(token=token)
+    return schemas.RegisterResponse(
+        token=token,
+        player_id=player.id,
+        team_name=player.team_name,
+        members=decode_members(player.members),
+    )
 
 
 @app.get("/v1/status", response_model=schemas.StatusResponse)
@@ -505,22 +609,34 @@ async def get_status(context=Depends(require_player)):
     for task in tasks:
         for exchange in range(1, game.exchanges + 1):
             key = (task.id, exchange)
+            solved_by_me = key in solved_by_player
+            wrong_attempts = counters.wrong_count(key)
+            wrong_attempts_left = max(0, game.wrong_attempt_limit - wrong_attempts)
             statuses.append(
                 schemas.TaskStatus(
                     task_id=task.id,
                     name=task.name,
+                    statement=task.statement,
                     exchange=exchange,
                     base_cost=task.base_cost,
                     cost=counters.cost(task, game, exchange, now=now),
-                    solved_by_me=key in solved_by_player,
+                    solved_by_me=solved_by_me,
                     my_solved_cost=solved_by_player.get(key),
+                    can_submit=not solved_by_me,
                     attempts=counters.attempt_count(key),
                     my_attempts=my_attempt_counts.get(key, 0),
-                    wrong_attempts=counters.wrong_count(key),
+                    wrong_attempts=wrong_attempts,
+                    wrong_attempts_left=wrong_attempts_left,
+                    wrong_limit_reached=wrong_attempts_left == 0,
                     solves=counters.solve_count(key),
                 )
             )
-    return schemas.StatusResponse(game_id=game.id, tasks=statuses)
+    return schemas.StatusResponse(
+        game_id=game.id,
+        game=await game_info(game, session),
+        player=player_info(player),
+        tasks=statuses,
+    )
 
 
 @app.post("/v1/submit", response_model=schemas.SubmitResponse)
@@ -592,11 +708,13 @@ async def submit_solution(
     session.add(submission)
 
     if accepted:
+        await session.flush()
         session.add(
             models.PlayerSolved(
                 player_id=player.id,
                 game_id=game.id,
                 task_id=task.id,
+                submission_id=submission.id,
                 exchange=payload.exchange,
                 cost=current_cost,
             )
@@ -647,6 +765,99 @@ async def player_attempt_count(
     )
 
 
+@app.get(
+    "/v1/games/{game_id}/submissions",
+    response_model=schemas.SubmissionListResponse,
+)
+async def list_game_submissions(
+    game_id: str,
+    _auth=Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    game = await session.get(models.Game, game_id)
+    if not game:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Game not found"
+        )
+
+    submissions_result = await session.execute(
+        select(models.Submission)
+        .where(models.Submission.game_id == game_id)
+        .order_by(models.Submission.created_at, models.Submission.id)
+    )
+    submissions = list(submissions_result.scalars().all())
+
+    players_result = await session.execute(
+        select(models.Player).where(models.Player.game_id == game_id)
+    )
+    players = {player.id: player for player in players_result.scalars().all()}
+
+    tasks = await get_game_tasks(game, session)
+    tasks_by_id = {task.id: task for task in tasks}
+
+    return schemas.SubmissionListResponse(
+        game_id=game_id,
+        submissions=[
+            schemas.SubmissionAdmin(
+                id=submission.id,
+                game_id=submission.game_id,
+                player_id=submission.player_id,
+                team_name=players[submission.player_id].team_name,
+                task_id=submission.task_id,
+                task_name=tasks_by_id[submission.task_id].name,
+                exchange=submission.exchange,
+                submitted_answer=submission.answer,
+                accepted=submission.accepted,
+                cost=submission.cost,
+                banned=submission.banned,
+                created_at=submission.created_at,
+            )
+            for submission in submissions
+        ],
+    )
+
+
+@app.post(
+    "/v1/submissions/{submission_id}/ban",
+    response_model=schemas.SubmissionBanResponse,
+)
+async def ban_submission(
+    submission_id: int,
+    _auth=Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    submission = await session.get(models.Submission, submission_id)
+    if not submission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found"
+        )
+
+    removed_solve = False
+    if not submission.banned and submission.accepted:
+        result = await session.execute(
+            delete(models.PlayerSolved).where(
+                (models.PlayerSolved.submission_id == submission.id)
+                | (
+                    (models.PlayerSolved.submission_id.is_(None))
+                    & (models.PlayerSolved.player_id == submission.player_id)
+                    & (models.PlayerSolved.game_id == submission.game_id)
+                    & (models.PlayerSolved.task_id == submission.task_id)
+                    & (models.PlayerSolved.exchange == submission.exchange)
+                )
+            )
+        )
+        removed_solve = bool(result.rowcount)
+
+    submission.banned = True
+    await session.commit()
+    return schemas.SubmissionBanResponse(
+        id=submission.id,
+        banned=submission.banned,
+        accepted=submission.accepted,
+        removed_solve=removed_solve,
+    )
+
+
 @app.get("/v1/leaderboard/{game_id}", response_model=schemas.LeaderboardResponse)
 async def get_leaderboard(
     game_id: str,
@@ -668,6 +879,7 @@ async def get_leaderboard(
         .order_by(models.Player.id)
     )
     players = list(players_result.scalars().all())
+    players_by_id = {player.id: player for player in players}
 
     solves_result = await session.execute(
         select(models.PlayerSolved).where(models.PlayerSolved.game_id == game.id)
@@ -707,6 +919,8 @@ async def get_leaderboard(
         player_rows.append(
             {
                 "player_id": player.id,
+                "team_name": player.team_name,
+                "members": decode_members(player.members),
                 "score": score,
                 "solves": len(player_solves),
                 "attempts": attempts,
@@ -739,6 +953,7 @@ async def get_leaderboard(
                 schemas.LeaderboardTask(
                     task_id=task.id,
                     name=task.name,
+                    statement=task.statement,
                     exchange=exchange,
                     base_cost=task.base_cost,
                     current_cost=counters.cost(task, game, exchange, now=now),
@@ -748,6 +963,7 @@ async def get_leaderboard(
                     solved_by=[
                         schemas.LeaderboardSolve(
                             player_id=solve.player_id,
+                            team_name=players_by_id[solve.player_id].team_name,
                             cost=solve.cost,
                             solved_at=solve.solved_at,
                         )

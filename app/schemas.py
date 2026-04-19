@@ -69,25 +69,67 @@ class GameStopResponse(BaseModel):
     status: GameStatusEnum = Field(..., description="Game status")
 
 
+class GameInfo(BaseModel):
+    id: str
+    status: GameStatusEnum
+    pool: str
+    exchanges: int
+    tasks: int
+    players: int
+    registered_players: int
+    duration_minutes: int | None = None
+    base_cost: int
+    cost_growth_per_minute: int
+    exchange_step_percent: int
+    solve_discount_percent: int
+    wrong_attempt_limit: int
+    wrong_attempt_growth_percent: int
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None
+    server_time: datetime | None = None
+
+
+class GameListResponse(BaseModel):
+    games: list[GameInfo]
+
+
 class RegisterRequest(BaseModel):
     game_id: str = Field(..., description="Target game identifier")
+    team_name: str | None = Field(
+        default=None, min_length=1, description="Team display name"
+    )
+    members: list[str] = Field(default_factory=list, description="Team members")
 
 
 class RegisterResponse(BaseModel):
     token: str = Field(..., description="Personal token for this game")
+    player_id: int
+    team_name: str
+    members: list[str]
+
+
+class PlayerInfo(BaseModel):
+    id: int
+    team_name: str
+    members: list[str]
 
 
 class TaskStatus(BaseModel):
     task_id: int
     name: str
+    statement: str
     exchange: int
     base_cost: int
     cost: int
     solved_by_me: bool
     my_solved_cost: int | None = None
+    can_submit: bool
     attempts: int
     my_attempts: int
     wrong_attempts: int
+    wrong_attempts_left: int
+    wrong_limit_reached: bool
     solves: int
 
     model_config = ConfigDict(from_attributes=True)
@@ -95,6 +137,8 @@ class TaskStatus(BaseModel):
 
 class StatusResponse(BaseModel):
     game_id: str
+    game: GameInfo
+    player: PlayerInfo
     tasks: list[TaskStatus]
 
 
@@ -118,6 +162,7 @@ class SubmitResponse(BaseModel):
 class TaskAddRequest(BaseModel):
     pool: str = Field(..., min_length=1, description="Pool name/slug")
     name: str = Field(..., min_length=1, description="Task name")
+    statement: str = Field(default="", description="Task statement")
     answer: str = Field(..., min_length=1, description="Correct answer")
     base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
 
@@ -126,11 +171,13 @@ class TaskAddResponse(BaseModel):
     id: int
     pool: str
     name: str
+    statement: str
     base_cost: int
 
 
 class TaskBulkItem(BaseModel):
     name: str = Field(..., min_length=1, description="Task name")
+    statement: str = Field(default="", description="Task statement")
     answer: str = Field(..., min_length=1, description="Correct answer")
     base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
 
@@ -150,6 +197,8 @@ class TaskBulkAddResponse(BaseModel):
 class LeaderboardPlayer(BaseModel):
     rank: int
     player_id: int
+    team_name: str
+    members: list[str]
     score: int
     solves: int
     attempts: int
@@ -159,6 +208,7 @@ class LeaderboardPlayer(BaseModel):
 
 class LeaderboardSolve(BaseModel):
     player_id: int
+    team_name: str
     cost: int
     solved_at: datetime
 
@@ -166,6 +216,7 @@ class LeaderboardSolve(BaseModel):
 class LeaderboardTask(BaseModel):
     task_id: int
     name: str
+    statement: str
     exchange: int
     base_cost: int
     current_cost: int
@@ -180,3 +231,30 @@ class LeaderboardResponse(BaseModel):
     status: GameStatusEnum
     players: list[LeaderboardPlayer]
     tasks: list[LeaderboardTask]
+
+
+class SubmissionAdmin(BaseModel):
+    id: int
+    game_id: str
+    player_id: int
+    team_name: str
+    task_id: int
+    task_name: str
+    exchange: int
+    submitted_answer: str
+    accepted: bool
+    cost: int
+    banned: bool
+    created_at: datetime | None = None
+
+
+class SubmissionListResponse(BaseModel):
+    game_id: str
+    submissions: list[SubmissionAdmin]
+
+
+class SubmissionBanResponse(BaseModel):
+    id: int
+    banned: bool
+    accepted: bool
+    removed_solve: bool
