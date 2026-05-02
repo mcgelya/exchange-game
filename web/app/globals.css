@@ -1,0 +1,135 @@
+:root {
+  --bg: #f4f6fb;
+  --panel: #ffffff;
+  --ink: #172033;
+  --muted: #667085;
+  --line: #dfe4ee;
+  --brand: #2454d6;
+  --brand-soft: #e9efff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(36, 84, 214, 0.12), transparent 32rem),
+    var(--bg);
+  color: var(--ink);
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.86);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+}
+
+.brand-mark {
+  align-items: center;
+  background: var(--brand);
+  border-radius: 8px;
+  color: white;
+  display: inline-flex;
+  font-weight: 800;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(25, 36, 67, 0.06);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.task-card {
+  height: 100%;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.task-card:hover {
+  border-color: rgba(36, 84, 214, 0.32);
+  transform: translateY(-1px);
+}
+
+.task-statement {
+  min-height: 4rem;
+  white-space: pre-wrap;
+}
+
+.price-pill {
+  background: var(--brand-soft);
+  border-radius: 999px;
+  color: #163c9f;
+  font-weight: 700;
+  padding: 0.35rem 0.65rem;
+}
+
+.table-fixed {
+  table-layout: fixed;
+}
+
+.answer-input {
+  min-width: 0;
+}
+
+.nav-pills .nav-link {
+  border-radius: 8px;
+  color: #344054;
+}
+
+.nav-pills .nav-link.active {
+  background: var(--brand);
+}
+
+.form-control,
+.form-select,
+.btn {
+  border-radius: 8px;
+}
+
+.btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.btn-outline-primary {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.btn-outline-primary:hover {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.code-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  min-height: 220px;
+}
+
+@media (max-width: 575.98px) {
+  .task-statement {
+    min-height: auto;
+  }
+
+  .table-responsive table {
+    min-width: 720px;
+  }
+}
