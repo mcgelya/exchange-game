@@ -99,6 +99,31 @@ def decode_members(value: str | None) -> list[str]:
     return [str(member) for member in parsed]
 
 
+def encode_answers(answers: list[str]) -> str:
+    cleaned = [answer.strip() for answer in answers if answer.strip()]
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
+def decode_answers(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(answer) for answer in parsed if str(answer).strip()]
+
+
+def answer_matches(task: models.Task, solution: str) -> bool:
+    submitted = normalize_answer(solution)
+    accepted_answers = [task.answer, *decode_answers(task.accepted_answers)]
+    return submitted in {
+        normalize_answer(answer) for answer in accepted_answers if answer.strip()
+    }
+
+
 def player_info(player: models.Player) -> schemas.PlayerInfo:
     return schemas.PlayerInfo(
         id=player.id,
@@ -221,7 +246,7 @@ async def game_info(game: models.Game, session: AsyncSession) -> schemas.GameInf
         cost_growth_per_minute=game.cost_growth_per_minute,
         exchange_step_percent=game.exchange_step_percent,
         solve_discount_percent=game.solve_discount_percent,
-        wrong_attempt_limit=game.wrong_attempt_limit,
+        attempt_limit=game.attempt_limit,
         wrong_attempt_growth_percent=game.wrong_attempt_growth_percent,
         created_at=game.created_at,
         started_at=game.started_at,
@@ -343,9 +368,7 @@ async def create_game(
         solve_discount_percent=pick(
             payload.solve_discount_percent, settings.solve_discount_percent
         ),
-        wrong_attempt_limit=pick(
-            payload.wrong_attempt_limit, settings.wrong_attempt_limit
-        ),
+        attempt_limit=pick(payload.attempt_limit, settings.attempt_limit),
         wrong_attempt_growth_percent=pick(
             payload.wrong_attempt_growth_percent,
             settings.wrong_attempt_growth_percent,
@@ -412,6 +435,7 @@ async def add_task(
     )
     if task:
         task.answer = payload.answer
+        task.accepted_answers = encode_answers(payload.accepted_answers)
         task.statement = payload.statement
         task.base_cost = pick(payload.base_cost, settings.base_task_cost)
     else:
@@ -420,6 +444,7 @@ async def add_task(
             name=payload.name,
             statement=payload.statement,
             answer=payload.answer,
+            accepted_answers=encode_answers(payload.accepted_answers),
             base_cost=pick(payload.base_cost, settings.base_task_cost),
         )
         session.add(task)
@@ -429,6 +454,7 @@ async def add_task(
         pool=task.pool,
         name=task.name,
         statement=task.statement,
+        accepted_answers=decode_answers(task.accepted_answers),
         base_cost=task.base_cost,
     )
 
@@ -464,6 +490,7 @@ async def add_task_pool(
         task = existing.get(item.name)
         if task:
             task.answer = item.answer
+            task.accepted_answers = encode_answers(item.accepted_answers)
             task.statement = item.statement
             task.base_cost = pick(item.base_cost, settings.base_task_cost)
             updated += 1
@@ -473,6 +500,7 @@ async def add_task_pool(
                 name=item.name,
                 statement=item.statement,
                 answer=item.answer,
+                accepted_answers=encode_answers(item.accepted_answers),
                 base_cost=pick(item.base_cost, settings.base_task_cost),
             )
             session.add(task)
@@ -490,6 +518,7 @@ async def add_task_pool(
                 pool=task.pool,
                 name=task.name,
                 statement=task.statement,
+                accepted_answers=decode_answers(task.accepted_answers),
                 base_cost=task.base_cost,
             )
             for task in tasks
@@ -584,13 +613,12 @@ async def get_status(context=Depends(require_player)):
         )
     )
     solved_by_player = {
-        (task_id, exchange): cost for task_id, exchange, cost in solved_rows.all()
+        task_id: (exchange, cost) for task_id, exchange, cost in solved_rows.all()
     }
 
     my_attempt_rows = await session.execute(
         select(
             models.Submission.task_id,
-            models.Submission.exchange,
             func.count(models.Submission.id),
         )
         .where(
@@ -598,20 +626,20 @@ async def get_status(context=Depends(require_player)):
             models.Submission.game_id == game.id,
             models.Submission.banned.is_(False),
         )
-        .group_by(models.Submission.task_id, models.Submission.exchange)
+        .group_by(models.Submission.task_id)
     )
-    my_attempt_counts = {
-        (task_id, exchange): count for task_id, exchange, count in my_attempt_rows.all()
-    }
+    my_attempt_counts = {task_id: count for task_id, count in my_attempt_rows.all()}
 
     now = datetime.now(timezone.utc)
     statuses = []
     for task in tasks:
         for exchange in range(1, game.exchanges + 1):
             key = (task.id, exchange)
-            solved_by_me = key in solved_by_player
+            solved = solved_by_player.get(task.id)
+            solved_by_me = solved is not None
             wrong_attempts = counters.wrong_count(key)
-            wrong_attempts_left = max(0, game.wrong_attempt_limit - wrong_attempts)
+            my_attempts = my_attempt_counts.get(task.id, 0)
+            attempts_left = max(0, game.attempt_limit - my_attempts)
             statuses.append(
                 schemas.TaskStatus(
                     task_id=task.id,
@@ -621,13 +649,14 @@ async def get_status(context=Depends(require_player)):
                     base_cost=task.base_cost,
                     cost=counters.cost(task, game, exchange, now=now),
                     solved_by_me=solved_by_me,
-                    my_solved_cost=solved_by_player.get(key),
-                    can_submit=not solved_by_me,
+                    my_solved_exchange=solved[0] if solved else None,
+                    my_solved_cost=solved[1] if solved else None,
+                    can_submit=not solved_by_me and attempts_left > 0,
                     attempts=counters.attempt_count(key),
-                    my_attempts=my_attempt_counts.get(key, 0),
+                    my_attempts=my_attempts,
                     wrong_attempts=wrong_attempts,
-                    wrong_attempts_left=wrong_attempts_left,
-                    wrong_limit_reached=wrong_attempts_left == 0,
+                    attempts_left=attempts_left,
+                    attempt_limit_reached=attempts_left == 0,
                     solves=counters.solve_count(key),
                 )
             )
@@ -673,9 +702,12 @@ async def submit_solution(
             models.PlayerSolved.player_id == player.id,
             models.PlayerSolved.game_id == game.id,
             models.PlayerSolved.task_id == task.id,
-            models.PlayerSolved.exchange == payload.exchange,
         )
     )
+    attempts_before = await player_task_attempt_count(
+        player.id, game.id, task.id, session
+    )
+    attempts_left_before = max(0, game.attempt_limit - attempts_before)
     if already_solved:
         return schemas.SubmitResponse(
             accepted=False,
@@ -683,18 +715,22 @@ async def submit_solution(
             exchange=payload.exchange,
             cost=current_cost,
             solved_by_me=True,
-            attempts=await player_attempt_count(player.id, game.id, key, session),
+            solved_exchange=already_solved.exchange,
+            attempts=attempts_before,
+            attempts_left=attempts_left_before,
+            attempt_limit_reached=attempts_left_before == 0,
             wrong_attempts=counters.wrong_count(key),
             solves=counters.solve_count(key),
         )
 
-    accepted = normalize_answer(payload.solution) == normalize_answer(task.answer)
-    wrong_attempts_before = counters.wrong_count(key)
-    if not accepted and wrong_attempts_before >= game.wrong_attempt_limit:
+    if attempts_before >= game.attempt_limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Wrong submit limit reached for this task/exchange",
+            detail="Submit limit reached for this task",
         )
+
+    accepted = answer_matches(task, payload.solution)
+    wrong_attempts_before = counters.wrong_count(key)
 
     submission = models.Submission(
         player_id=player.id,
@@ -721,6 +757,8 @@ async def submit_solution(
         )
 
     await session.commit()
+    attempts = attempts_before + 1
+    attempts_left = max(0, game.attempt_limit - attempts)
     wrong_attempts = wrong_attempts_before + (0 if accepted else 1)
     response_cost = (
         current_cost
@@ -739,16 +777,18 @@ async def submit_solution(
         exchange=payload.exchange,
         cost=response_cost,
         solved_by_me=accepted,
-        attempts=await player_attempt_count(player.id, game.id, key, session),
+        solved_exchange=payload.exchange if accepted else None,
+        attempts=attempts,
+        attempts_left=attempts_left,
+        attempt_limit_reached=attempts_left == 0,
         wrong_attempts=wrong_attempts,
         solves=counters.solve_count(key) + (1 if accepted else 0),
     )
 
 
-async def player_attempt_count(
-    player_id: int, game_id: str, key: tuple[int, int], session: AsyncSession
+async def player_task_attempt_count(
+    player_id: int, game_id: str, task_id: int, session: AsyncSession
 ) -> int:
-    task_id, exchange = key
     return (
         await session.scalar(
             select(func.count())
@@ -757,7 +797,6 @@ async def player_attempt_count(
                 models.Submission.player_id == player_id,
                 models.Submission.game_id == game_id,
                 models.Submission.task_id == task_id,
-                models.Submission.exchange == exchange,
                 models.Submission.banned.is_(False),
             )
         )
@@ -842,7 +881,6 @@ async def ban_submission(
                     & (models.PlayerSolved.player_id == submission.player_id)
                     & (models.PlayerSolved.game_id == submission.game_id)
                     & (models.PlayerSolved.task_id == submission.task_id)
-                    & (models.PlayerSolved.exchange == submission.exchange)
                 )
             )
         )

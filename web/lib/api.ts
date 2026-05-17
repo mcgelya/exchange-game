@@ -85,7 +85,7 @@ export const api = {
       cost_growth_per_minute?: number | null;
       exchange_step_percent?: number | null;
       solve_discount_percent?: number | null;
-      wrong_attempt_limit?: number | null;
+      attempt_limit?: number | null;
       wrong_attempt_growth_percent?: number | null;
     }
   ) => request<{ id: string; status: string }>("/v1/create", { token: adminToken, method: "POST", body: payload }),
@@ -113,7 +113,14 @@ export const api = {
 
   adminAddTask: (
     adminToken: string,
-    payload: { pool: string; name: string; statement: string; answer: string; base_cost?: number | null }
+    payload: {
+      pool: string;
+      name: string;
+      statement: string;
+      answer: string;
+      accepted_answers?: string[];
+      base_cost?: number | null;
+    }
   ) => request<{ id: number; pool: string; name: string }>("/v1/add", { token: adminToken, method: "POST", body: payload }),
 
   adminSubmissions: (adminToken: string, gameId: string) =>

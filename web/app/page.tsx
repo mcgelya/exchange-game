@@ -209,8 +209,15 @@ function GameWorkspace({
   onExchange: (exchange: number | "all") => void;
   onRefresh: () => Promise<void>;
 }) {
-  const solved = status.tasks.filter((task) => task.solved_by_me).length;
-  const totalScore = status.tasks.reduce((sum, task) => sum + (task.my_solved_cost || 0), 0);
+  const solvedTasks = new Set(status.tasks.filter((task) => task.solved_by_me).map((task) => task.task_id));
+  const totalTasks = new Set(status.tasks.map((task) => task.task_id)).size;
+  const scoreByTask = new Map<number, number>();
+  status.tasks.forEach((task) => {
+    if (task.solved_by_me && task.my_solved_cost !== null && !scoreByTask.has(task.task_id)) {
+      scoreByTask.set(task.task_id, task.my_solved_cost);
+    }
+  });
+  const totalScore = Array.from(scoreByTask.values()).reduce((sum, cost) => sum + cost, 0);
 
   return (
     <div className="vstack gap-4">
@@ -246,7 +253,7 @@ function GameWorkspace({
             <div className="metric">
               <div className="muted small">Решено</div>
               <div className="h4 mb-0">
-                {solved}/{status.tasks.length}
+                {solvedTasks.size}/{totalTasks}
               </div>
             </div>
           </div>
@@ -319,7 +326,11 @@ function TaskCard({ task, token, onRefresh }: { task: TaskStatus; token: string;
         setSolution("");
       } else if (response.solved_by_me) {
         setTone("info");
-        setResult("Эта задача уже решена на этой бирже");
+        setResult(
+          response.solved_exchange
+            ? `Эта задача уже решена на бирже ${response.solved_exchange}`
+            : "Эта задача уже решена"
+        );
       } else {
         setTone("warning");
         setResult(`Неверно. Новая цена: ${response.cost}`);
@@ -350,10 +361,21 @@ function TaskCard({ task, token, onRefresh }: { task: TaskStatus; token: string;
 
       <div className="d-flex flex-wrap gap-2 mb-3">
         <span className="badge text-bg-light">решений: {task.solves}</span>
-        <span className="badge text-bg-light">попыток: {task.attempts}</span>
-        <span className={`badge ${task.wrong_limit_reached ? "text-bg-danger" : "text-bg-light"}`}>ошибок осталось: {task.wrong_attempts_left}</span>
-        {task.solved_by_me ? <span className="badge text-bg-success">решено</span> : null}
+        <span className="badge text-bg-light">рынок: {task.attempts} пос.</span>
+        <span className="badge text-bg-light">ошибок рынка: {task.wrong_attempts}</span>
+        <span className={`badge ${task.attempt_limit_reached ? "text-bg-danger" : "text-bg-light"}`}>посылок осталось: {task.attempts_left}</span>
+        {task.solved_by_me ? (
+          <span className="badge text-bg-success">
+            решено на бирже {task.my_solved_exchange ?? task.exchange}
+          </span>
+        ) : null}
       </div>
+
+      {task.solved_by_me && task.my_solved_exchange !== null && task.my_solved_exchange !== task.exchange ? (
+        <div className="alert alert-success py-2 mb-3">
+          Эта задача уже закрыта вашей командой на бирже {task.my_solved_exchange}.
+        </div>
+      ) : null}
 
       <Alert message={result} tone={tone} />
 

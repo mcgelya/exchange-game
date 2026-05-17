@@ -16,12 +16,14 @@ const bulkExample = JSON.stringify(
       name: "A",
       statement: "Find 40 + 2.",
       answer: "42",
+      accepted_answers: ["0042"],
       base_cost: 100
     },
     {
       name: "B",
       statement: "Find 3 + 4.",
       answer: "7",
+      accepted_answers: [],
       base_cost: 120
     }
   ],
@@ -44,6 +46,13 @@ function requiredNumber(data: FormData, key: string) {
 function optionalNumber(data: FormData, key: string) {
   const value = String(data.get(key) || "").trim();
   return value ? Number(value) : null;
+}
+
+function splitAcceptedAnswers(value: FormDataEntryValue | null) {
+  return String(value || "")
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export default function AdminPage() {
@@ -139,7 +148,7 @@ export default function AdminPage() {
         cost_growth_per_minute: optionalNumber(data, "cost_growth_per_minute"),
         exchange_step_percent: optionalNumber(data, "exchange_step_percent"),
         solve_discount_percent: optionalNumber(data, "solve_discount_percent"),
-        wrong_attempt_limit: optionalNumber(data, "wrong_attempt_limit"),
+        attempt_limit: optionalNumber(data, "attempt_limit"),
         wrong_attempt_growth_percent: optionalNumber(data, "wrong_attempt_growth_percent")
       });
       setSuccess(`Игра ${response.id} создана`);
@@ -166,6 +175,7 @@ export default function AdminPage() {
         name: String(data.get("name") || "").trim(),
         statement: String(data.get("statement") || ""),
         answer: String(data.get("answer") || "").trim(),
+        accepted_answers: splitAcceptedAnswers(data.get("accepted_answers")),
         base_cost: optionalNumber(data, "base_cost")
       });
       setSuccess(`Задача ${response.name} сохранена в пуле ${response.pool}`);
@@ -413,8 +423,8 @@ function CreateGamePanel({ action, onCreate }: { action: string | null; onCreate
           <input className="form-control" name="solve_discount_percent" type="number" min={0} max={100} placeholder="10" />
         </div>
         <div className="col-6">
-          <label className="form-label">Лимит ошибок</label>
-          <input className="form-control" name="wrong_attempt_limit" type="number" min={0} placeholder="5" />
+          <label className="form-label">Лимит посылок</label>
+          <input className="form-control" name="attempt_limit" type="number" min={0} placeholder="6" />
         </div>
         <div className="col-12">
           <label className="form-label">Рост за ошибку, %</label>
@@ -476,6 +486,16 @@ function TaskPanel({
               <input className="form-control" name="base_cost" type="number" min={0} />
             </div>
           </div>
+          <div>
+            <label className="form-label">Дополнительные верные ответы</label>
+            <textarea
+              className="form-control"
+              name="accepted_answers"
+              rows={3}
+              placeholder="0042, 42.0"
+            />
+            <div className="form-text">Через запятую или с новой строки.</div>
+          </div>
           <LoadingButton loading={action === "add-task"} className="btn btn-outline-primary" type="submit">
             Сохранить задачу
           </LoadingButton>
@@ -491,7 +511,17 @@ function TaskPanel({
           </div>
           <div>
             <label className="form-label">JSON задач</label>
-            <textarea className="form-control code-textarea" value={bulkTasks} onChange={(event) => onBulkTasks(event.target.value)} required />
+            <textarea
+              className="form-control code-textarea code-textarea-lg"
+              value={bulkTasks}
+              onChange={(event) => onBulkTasks(event.target.value)}
+              rows={16}
+              spellCheck={false}
+              required
+            />
+            <div className="form-text">
+              Массив задач JSON. Поддерживаются поля name, statement, answer, accepted_answers, base_cost.
+            </div>
           </div>
           <LoadingButton loading={action === "add-pool"} className="btn btn-primary" type="submit">
             Загрузить
@@ -563,8 +593,8 @@ function SelectedGamePanel({
             </div>
             <div className="col-6 col-md-3">
               <div className="metric">
-                <div className="muted small">Лимит ошибок</div>
-                <div className="h5 mb-0">{game.wrong_attempt_limit}</div>
+                <div className="muted small">Лимит посылок</div>
+                <div className="h5 mb-0">{game.attempt_limit}</div>
               </div>
             </div>
           </div>

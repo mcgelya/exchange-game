@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     cost_growth_per_minute: int = 5
     exchange_step_percent: int = 10
     solve_discount_percent: int = 10
-    wrong_attempt_limit: int = 5
+    attempt_limit: int = 6
     wrong_attempt_growth_percent: int = 3
 
     model_config = SettingsConfigDict(

@@ -13,7 +13,7 @@ export type GameInfo = {
   cost_growth_per_minute: number;
   exchange_step_percent: number;
   solve_discount_percent: number;
-  wrong_attempt_limit: number;
+  attempt_limit: number;
   wrong_attempt_growth_percent: number;
   created_at: string | null;
   started_at: string | null;
@@ -35,13 +35,14 @@ export type TaskStatus = {
   base_cost: number;
   cost: number;
   solved_by_me: boolean;
+  my_solved_exchange: number | null;
   my_solved_cost: number | null;
   can_submit: boolean;
   attempts: number;
   my_attempts: number;
   wrong_attempts: number;
-  wrong_attempts_left: number;
-  wrong_limit_reached: boolean;
+  attempts_left: number;
+  attempt_limit_reached: boolean;
   solves: number;
 };
 
@@ -65,7 +66,10 @@ export type SubmitResponse = {
   exchange: number;
   cost: number;
   solved_by_me: boolean;
+  solved_exchange: number | null;
   attempts: number;
+  attempts_left: number;
+  attempt_limit_reached: boolean;
   wrong_attempts: number;
   solves: number;
 };
@@ -128,5 +132,6 @@ export type TaskBulkItem = {
   name: string;
   statement: string;
   answer: string;
+  accepted_answers?: string[];
   base_cost?: number | null;
 };

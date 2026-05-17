@@ -43,7 +43,7 @@ class Game(Base):
     cost_growth_per_minute: Mapped[int] = mapped_column(Integer, default=5)
     exchange_step_percent: Mapped[int] = mapped_column(Integer, default=10)
     solve_discount_percent: Mapped[int] = mapped_column(Integer, default=10)
-    wrong_attempt_limit: Mapped[int] = mapped_column(Integer, default=5)
+    attempt_limit: Mapped[int] = mapped_column(Integer, default=6)
     wrong_attempt_growth_percent: Mapped[int] = mapped_column(Integer, default=3)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -73,6 +73,7 @@ class Task(Base):
     name: Mapped[str] = mapped_column(String(100))
     statement: Mapped[str] = mapped_column(Text, default="")
     answer: Mapped[str] = mapped_column(String(255))
+    accepted_answers: Mapped[str] = mapped_column(Text, default="[]")
     base_cost: Mapped[int] = mapped_column(Integer, default=100)
 
     __table_args__ = (UniqueConstraint("pool", "name", name="uq_task_pool_name"),)
@@ -128,7 +129,6 @@ class PlayerSolved(Base):
             "player_id",
             "game_id",
             "task_id",
-            "exchange",
-            name="uq_player_game_task_exchange",
+            name="uq_player_game_task",
         ),
     )

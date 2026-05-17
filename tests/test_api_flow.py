@@ -8,7 +8,7 @@ ADMIN_HEADERS = {"Authorization": "Bearer changeme"}
 
 
 @pytest.mark.asyncio
-async def test_wrong_submissions_increase_cost_until_cap():
+async def test_attempt_limit_equivalent_answers_and_single_exchange_solve():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         pool_response = await client.post(
@@ -21,6 +21,7 @@ async def test_wrong_submissions_increase_cost_until_cap():
                         "name": "A",
                         "statement": "Find 40 + 2.",
                         "answer": "42",
+                        "accepted_answers": ["0042"],
                         "base_cost": 100,
                     },
                 ],
@@ -32,14 +33,14 @@ async def test_wrong_submissions_increase_cost_until_cap():
             "/v1/create",
             headers=ADMIN_HEADERS,
             json={
-                "exchanges": 1,
+                "exchanges": 2,
                 "tasks": 1,
                 "players": 2,
                 "pool": "demo",
                 "cost_growth_per_minute": 0,
                 "exchange_step_percent": 10,
                 "solve_discount_percent": 10,
-                "wrong_attempt_limit": 5,
+                "attempt_limit": 6,
                 "wrong_attempt_growth_percent": 3,
             },
         )
@@ -75,14 +76,14 @@ async def test_wrong_submissions_increase_cost_until_cap():
         status_response = await client.get("/v1/status", headers=player_headers)
         assert status_response.status_code == 200
         status_payload = status_response.json()
-        assert status_payload["game"]["wrong_attempt_limit"] == 5
+        assert status_payload["game"]["attempt_limit"] == 6
         assert status_payload["game"]["registered_players"] == 2
         assert status_payload["player"]["team_name"] == "Euler"
         task_id = status_payload["tasks"][0]["task_id"]
         assert status_payload["tasks"][0]["statement"] == "Find 40 + 2."
         assert status_payload["tasks"][0]["cost"] == 100
         assert status_payload["tasks"][0]["can_submit"] is True
-        assert status_payload["tasks"][0]["wrong_attempts_left"] == 5
+        assert status_payload["tasks"][0]["attempts_left"] == 6
 
         wrong_costs = []
         for _ in range(5):
@@ -97,35 +98,49 @@ async def test_wrong_submissions_increase_cost_until_cap():
 
         assert wrong_costs == [103, 106, 109, 112, 115]
 
-        rejected_response = await client.post(
-            "/v1/submit",
-            headers=player_headers,
-            json={"task": task_id, "exchange": 1, "solution": "wrong"},
-        )
-        assert rejected_response.status_code == 429
-        assert rejected_response.json()["detail"] == (
-            "Wrong submit limit reached for this task/exchange"
-        )
-
-        status_after_wrong = await client.get("/v1/status", headers=spectator_headers)
+        status_after_wrong = await client.get("/v1/status", headers=player_headers)
         task_status = status_after_wrong.json()["tasks"][0]
         assert task_status["cost"] == 115
         assert task_status["attempts"] == 5
+        assert task_status["my_attempts"] == 5
         assert task_status["wrong_attempts"] == 5
-        assert task_status["wrong_attempts_left"] == 0
-        assert task_status["wrong_limit_reached"] is True
+        assert task_status["attempts_left"] == 1
+        assert task_status["attempt_limit_reached"] is False
+
+        spectator_status = await client.get("/v1/status", headers=spectator_headers)
+        assert spectator_status.json()["tasks"][0]["attempts_left"] == 6
 
         solve_response = await client.post(
             "/v1/submit",
             headers=player_headers,
-            json={"task": task_id, "exchange": 1, "solution": "42"},
+            json={"task": task_id, "exchange": 1, "solution": "0042"},
         )
         assert solve_response.status_code == 200
         assert solve_response.json()["accepted"] is True
         assert solve_response.json()["cost"] == 115
+        assert solve_response.json()["attempts"] == 6
+        assert solve_response.json()["attempts_left"] == 0
+        assert solve_response.json()["attempt_limit_reached"] is True
+        assert solve_response.json()["solved_exchange"] == 1
 
         solved_status = await client.get("/v1/status", headers=player_headers)
-        assert solved_status.json()["tasks"][0]["can_submit"] is False
+        solved_tasks = solved_status.json()["tasks"]
+        assert len(solved_tasks) == 2
+        assert all(task["can_submit"] is False for task in solved_tasks)
+        assert all(task["solved_by_me"] is True for task in solved_tasks)
+        assert all(task["my_solved_exchange"] == 1 for task in solved_tasks)
+        assert all(task["my_solved_cost"] == 115 for task in solved_tasks)
+
+        second_exchange_response = await client.post(
+            "/v1/submit",
+            headers=player_headers,
+            json={"task": task_id, "exchange": 2, "solution": "42"},
+        )
+        assert second_exchange_response.status_code == 200
+        assert second_exchange_response.json()["accepted"] is False
+        assert second_exchange_response.json()["solved_by_me"] is True
+        assert second_exchange_response.json()["solved_exchange"] == 1
+        assert second_exchange_response.json()["attempts"] == 6
 
         leaderboard_response = await client.get(f"/v1/leaderboard/{game_id}")
         assert leaderboard_response.status_code == 200
@@ -139,6 +154,9 @@ async def test_wrong_submissions_increase_cost_until_cap():
         assert leaderboard["tasks"][0]["wrong_attempts"] == 5
         assert leaderboard["tasks"][0]["solves"] == 1
         assert leaderboard["tasks"][0]["solved_by"][0]["team_name"] == "Euler"
+        assert leaderboard["tasks"][1]["exchange"] == 2
+        assert leaderboard["tasks"][1]["current_cost"] == 110
+        assert leaderboard["tasks"][1]["solves"] == 0
 
         submissions_response = await client.get(
             f"/v1/games/{game_id}/submissions",
@@ -150,7 +168,7 @@ async def test_wrong_submissions_increase_cost_until_cap():
             for submission in submissions_response.json()["submissions"]
             if submission["accepted"]
         )
-        assert accepted_submission["submitted_answer"] == "42"
+        assert accepted_submission["submitted_answer"] == "0042"
 
         ban_response = await client.post(
             f"/v1/submissions/{accepted_submission['id']}/ban",
@@ -167,3 +185,21 @@ async def test_wrong_submissions_increase_cost_until_cap():
 
         status_after_ban = await client.get("/v1/status", headers=player_headers)
         assert status_after_ban.json()["tasks"][0]["can_submit"] is True
+        assert status_after_ban.json()["tasks"][0]["attempts_left"] == 1
+
+        final_wrong_response = await client.post(
+            "/v1/submit",
+            headers=player_headers,
+            json={"task": task_id, "exchange": 1, "solution": "wrong"},
+        )
+        assert final_wrong_response.status_code == 200
+        assert final_wrong_response.json()["attempts"] == 6
+        assert final_wrong_response.json()["attempt_limit_reached"] is True
+
+        limit_response = await client.post(
+            "/v1/submit",
+            headers=player_headers,
+            json={"task": task_id, "exchange": 1, "solution": "42"},
+        )
+        assert limit_response.status_code == 429
+        assert limit_response.json()["detail"] == "Submit limit reached for this task"

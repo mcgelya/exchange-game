@@ -124,6 +124,11 @@ body {
   min-height: 220px;
 }
 
+.code-textarea-lg {
+  min-height: 420px;
+  resize: vertical;
+}
+
 @media (max-width: 575.98px) {
   .task-statement {
     min-height: auto;

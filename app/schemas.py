@@ -33,10 +33,10 @@ class GameCreateRequest(BaseModel):
     solve_discount_percent: int | None = Field(
         default=None, ge=0, le=100, description="Cost discount after every solve"
     )
-    wrong_attempt_limit: int | None = Field(
+    attempt_limit: int | None = Field(
         default=None,
         ge=0,
-        description="Max wrong attempts that can increase task cost",
+        description="Max submissions per player and task across all exchanges",
     )
     wrong_attempt_growth_percent: int | None = Field(
         default=None,
@@ -82,7 +82,7 @@ class GameInfo(BaseModel):
     cost_growth_per_minute: int
     exchange_step_percent: int
     solve_discount_percent: int
-    wrong_attempt_limit: int
+    attempt_limit: int
     wrong_attempt_growth_percent: int
     created_at: datetime | None = None
     started_at: datetime | None = None
@@ -123,13 +123,14 @@ class TaskStatus(BaseModel):
     base_cost: int
     cost: int
     solved_by_me: bool
+    my_solved_exchange: int | None = None
     my_solved_cost: int | None = None
     can_submit: bool
     attempts: int
     my_attempts: int
     wrong_attempts: int
-    wrong_attempts_left: int
-    wrong_limit_reached: bool
+    attempts_left: int
+    attempt_limit_reached: bool
     solves: int
 
     model_config = ConfigDict(from_attributes=True)
@@ -154,7 +155,10 @@ class SubmitResponse(BaseModel):
     exchange: int
     cost: int
     solved_by_me: bool
+    solved_exchange: int | None = None
     attempts: int
+    attempts_left: int
+    attempt_limit_reached: bool
     wrong_attempts: int
     solves: int
 
@@ -164,6 +168,10 @@ class TaskAddRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Task name")
     statement: str = Field(default="", description="Task statement")
     answer: str = Field(..., min_length=1, description="Correct answer")
+    accepted_answers: list[str] = Field(
+        default_factory=list,
+        description="Additional answer strings accepted as correct",
+    )
     base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
 
 
@@ -172,6 +180,7 @@ class TaskAddResponse(BaseModel):
     pool: str
     name: str
     statement: str
+    accepted_answers: list[str]
     base_cost: int
 
 
@@ -179,6 +188,10 @@ class TaskBulkItem(BaseModel):
     name: str = Field(..., min_length=1, description="Task name")
     statement: str = Field(default="", description="Task statement")
     answer: str = Field(..., min_length=1, description="Correct answer")
+    accepted_answers: list[str] = Field(
+        default_factory=list,
+        description="Additional answer strings accepted as correct",
+    )
     base_cost: int | None = Field(default=None, ge=0, description="Task base cost")
 
 
